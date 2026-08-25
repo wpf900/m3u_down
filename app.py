@@ -7,7 +7,11 @@ import subprocess
 import sys
 import threading
 import time
+import traceback
 from pathlib import Path
+
+if sys.platform == "win32":
+    os.environ.setdefault("PYTHONNET_RUNTIME", "netfx")
 
 import webview
 
@@ -34,6 +38,49 @@ ICON = ROOT / "assets" / "icon.png"
 SUPPORT = support_dir()
 SETTINGS_PATH = SUPPORT / "settings.json"
 DEFAULT_OUTPUT = str(Path.home() / "Downloads" / "流影")
+WEBVIEW2_URL = "https://go.microsoft.com/fwlink/p/?LinkId=2124703"
+
+
+def _alert(title: str, message: str) -> None:
+    if sys.platform == "win32":
+        import ctypes
+
+        ctypes.windll.user32.MessageBoxW(0, message, title, 0x10)
+        return
+    print(f"{title}: {message}", file=sys.stderr)
+
+
+def _write_error_log(text: str) -> Path:
+    path = support_dir() / "error.log"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def _has_webview2() -> bool:
+    if sys.platform != "win32":
+        return True
+    import winreg
+
+    keys = (
+        r"SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}",
+        r"SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}",
+    )
+    hives = (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER)
+    for hive in hives:
+        for key in keys:
+            try:
+                with winreg.OpenKey(hive, key) as handle:
+                    version, _ = winreg.QueryValueEx(handle, "pv")
+                if version and version != "0.0.0.0":
+                    return True
+            except OSError:
+                continue
+    roots = (
+        Path(os.environ.get("PROGRAMFILES", r"C:\Program Files")) / "Microsoft" / "EdgeWebView",
+        Path(os.environ.get("PROGRAMFILES(X86)", r"C:\Program Files (x86)")) / "Microsoft" / "EdgeWebView",
+    )
+    return any((root / "Application").is_dir() for root in roots)
 
 
 def load_settings() -> dict:
@@ -196,9 +243,22 @@ def _force_exit() -> None:
 
 
 def main() -> None:
+    if getattr(sys, "frozen", False):
+        os.chdir(Path(sys.executable).resolve().parent)
+    html = ROOT / "web" / "index.html"
+    if not html.is_file():
+        raise FileNotFoundError(
+            "找不到界面文件 web/index.html。\n"
+            "请解压整个压缩包，在含有 Liuying.exe 和 _internal 的文件夹里运行，不要只拷贝 exe。"
+        )
+    if not _has_webview2():
+        raise RuntimeError(
+            "未检测到 Microsoft Edge WebView2，窗口无法显示。\n"
+            f"请安装：{WEBVIEW2_URL}\n"
+            "装好后重新双击 Liuying.exe。"
+        )
     api = Api()
     webview.settings["ALLOW_FILE_URLS"] = True
-    html = ROOT / "web" / "index.html"
     window = webview.create_window(
         "流影",
         url=str(html),
@@ -206,7 +266,7 @@ def main() -> None:
         width=900,
         height=720,
         min_size=(760, 580),
-        frameless=True,
+        frameless=sys.platform != "win32",
         easy_drag=False,
         shadow=True,
         background_color="#F3F5EE",
@@ -222,7 +282,15 @@ def main() -> None:
     signal.signal(signal.SIGTERM, handle_signal)
 
     icon = str(ICON) if ICON.exists() else None
-    webview.start(icon=icon, private_mode=True, http_server=True)
+    start_kwargs = {
+        "icon": icon,
+        "private_mode": True,
+        "http_server": True,
+        "storage_path": str(support_dir() / "webview"),
+    }
+    if sys.platform == "win32":
+        start_kwargs["gui"] = "edgechromium"
+    webview.start(**start_kwargs)
     api.quit()
 
 
@@ -230,5 +298,9 @@ if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        os._exit(0)
+        pass
+    except Exception as exc:
+        details = "".join(traceback.format_exception(exc))
+        log_path = _write_error_log(details)
+        _alert("流影启动失败", f"{exc}\n\n详细日志：\n{log_path}")
     os._exit(0)

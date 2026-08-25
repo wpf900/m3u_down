@@ -44,9 +44,10 @@ git push origin v1.0.1
 
 ### Windows 怎么用
 
-1. 解压 zip，得到 `Liuying` 文件夹
-2. 双击 `Liuying.exe`（请保留整个文件夹，不要只拷贝 exe）
-3. 若提示缺少 WebView2，安装 [Microsoft Edge WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/)（Win10/11 一般都已自带）
+1. 解压 zip，进入里面的 `Liuying` 文件夹
+2. 确认同时有 `Liuying.exe` 和 `_internal` 文件夹，再双击 exe（不要只拷贝 exe）
+3. 若双击没反应或弹出 WebView2 提示，安装 [Microsoft Edge WebView2 Runtime](https://go.microsoft.com/fwlink/p/?LinkId=2124703) 后再开
+4. 启动失败时会弹窗，日志在 `%APPDATA%\Liuying\error.log`
 
 ### Mac 怎么用
 

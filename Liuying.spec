@@ -4,7 +4,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_data_files
+from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs
 
 ROOT = Path(SPECPATH)
 
@@ -32,6 +32,7 @@ datas = [
 datas += collect_data_files("webview", subdir="js")
 if sys.platform == "win32":
     datas += collect_data_files("webview", subdir="lib")
+    binaries += collect_dynamic_libs("webview")
 
 hiddenimports = [
     "bottle",
@@ -44,10 +45,12 @@ if sys.platform == "darwin":
     hiddenimports += ["webview.platforms.cocoa"]
 elif sys.platform == "win32":
     hiddenimports += [
+        "clr",
         "clr_loader",
         "pythonnet",
         "webview.platforms.edgechromium",
         "webview.platforms.winforms",
+        "webview.platforms.win32",
     ]
 
 a = Analysis(

@@ -51,6 +51,13 @@ def main() -> None:
         print(f"\nWindows folder: {folder}")
         print("Ship the whole Liuying folder. Users run Liuying.exe.")
         print("Requires Microsoft Edge WebView2 (included on most Win10/11 PCs).")
+        (folder / "请解压后在本目录运行.txt").write_text(
+            "不要只拷贝 Liuying.exe。\n"
+            "必须保留同目录下的 _internal 文件夹，然后双击 Liuying.exe。\n"
+            "如果双击没反应，安装 WebView2 后重试：\n"
+            "https://go.microsoft.com/fwlink/p/?LinkId=2124703\n",
+            encoding="utf-8",
+        )
 
 
 if __name__ == "__main__":
