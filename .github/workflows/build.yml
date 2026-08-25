@@ -16,7 +16,7 @@ permissions:
 
 jobs:
   prepare-release:
-    if: github.ref_type == 'tag' || inputs.version != ''
+    if: github.repository == 'wpf900/m3u_down' && (github.ref_type == 'tag' || inputs.version != '')
     runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.tag.outputs.tag }}
@@ -37,7 +37,7 @@ jobs:
 
   package:
     needs: prepare-release
-    if: always() && !cancelled() && (needs.prepare-release.result == 'success' || needs.prepare-release.result == 'skipped')
+    if: github.repository == 'wpf900/m3u_down' && always() && !cancelled() && (needs.prepare-release.result == 'success' || needs.prepare-release.result == 'skipped')
     strategy:
       fail-fast: false
       matrix:
