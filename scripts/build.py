@@ -43,14 +43,14 @@ def main() -> None:
     dist = ROOT / "dist"
     if sys.platform == "darwin":
         app = dist / "Liuying.app"
-        print(f"\nMac 应用: {app}")
-        print("未签名。别人电脑上若提示损坏，请右键打开，或执行：")
+        print(f"\nmacOS app: {app}")
+        print("Unsigned. If macOS says the app is damaged, run:")
         print(f'  xattr -cr "{app}"')
     else:
         folder = dist / "Liuying"
-        print(f"\nWindows 目录: {folder}")
-        print("把整个 Liuying 文件夹发给用户，双击 Liuying.exe。")
-        print("需要系统已安装 Microsoft Edge WebView2（Win10/11 一般都有）。")
+        print(f"\nWindows folder: {folder}")
+        print("Ship the whole Liuying folder. Users run Liuying.exe.")
+        print("Requires Microsoft Edge WebView2 (included on most Win10/11 PCs).")
 
 
 if __name__ == "__main__":

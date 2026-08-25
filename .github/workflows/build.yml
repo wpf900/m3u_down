@@ -32,6 +32,9 @@ jobs:
           python -m pip install -r requirements.txt -r requirements-build.txt
 
       - name: Build
+        env:
+          PYTHONUTF8: "1"
+          PYTHONIOENCODING: utf-8
         run: python scripts/build.py
 
       - name: Stage Windows zip
