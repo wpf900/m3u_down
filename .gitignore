@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+*.mp4
+.liuying_*
+build/
+dist/
+vendor/
+*.spec.bak
