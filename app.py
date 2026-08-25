@@ -53,6 +53,7 @@ def support_dir() -> Path:
 
 ROOT = resource_dir()
 ICON = ROOT / "assets" / "icon.png"
+ICON_ICNS = ROOT / "assets" / "icon.icns"
 SUPPORT = support_dir()
 SETTINGS_PATH = SUPPORT / "settings.json"
 DEFAULT_OUTPUT = str(Path.home() / "Downloads" / "流影")
@@ -244,6 +245,66 @@ def _force_exit() -> None:
     os._exit(0)
 
 
+def _ensure_foreground_app() -> None:
+    if sys.platform != "darwin" or getattr(sys, "frozen", False):
+        return
+    try:
+        import ctypes
+        from ctypes import POINTER, Structure, byref, c_int, c_uint32
+
+        class ProcessSerialNumber(Structure):
+            _fields_ = [("highLongOfPSN", c_uint32), ("lowLongOfPSN", c_uint32)]
+
+        lib = ctypes.CDLL(
+            "/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices"
+        )
+        transform = lib.TransformProcessType
+        transform.argtypes = [POINTER(ProcessSerialNumber), c_int]
+        transform.restype = c_int
+        psn = ProcessSerialNumber(0, 0)
+        transform(byref(psn), 1)
+    except Exception:
+        pass
+
+
+def _dock_icon_path() -> Path | None:
+    for path in (ICON_ICNS, ICON):
+        if path.is_file():
+            return path.resolve()
+    return None
+
+
+def _apply_dock_icon() -> None:
+    if sys.platform != "darwin" or getattr(sys, "frozen", False):
+        return
+    path = _dock_icon_path()
+    if not path:
+        return
+    try:
+        import AppKit
+
+        image = AppKit.NSImage.alloc().initWithContentsOfFile_(str(path))
+        if not image:
+            return
+        image.setSize_(AppKit.NSMakeSize(128, 128))
+        app = AppKit.NSApplication.sharedApplication()
+        app.setApplicationIconImage_(image)
+        app.dockTile().display()
+    except Exception:
+        pass
+
+
+def _schedule_dock_icon() -> None:
+    if sys.platform != "darwin" or getattr(sys, "frozen", False):
+        return
+    try:
+        from PyObjCTools import AppHelper
+
+        AppHelper.callAfter(_apply_dock_icon)
+    except Exception:
+        _apply_dock_icon()
+
+
 def main() -> None:
     SUPPORT.mkdir(parents=True, exist_ok=True)
     if getattr(sys, "frozen", False):
@@ -261,6 +322,8 @@ def main() -> None:
         run_windows(api, ROOT / "web", SUPPORT)
         api.quit()
         return
+
+    _ensure_foreground_app()
 
     import webview
 
@@ -287,9 +350,11 @@ def main() -> None:
     signal.signal(signal.SIGINT, handle_signal)
     signal.signal(signal.SIGTERM, handle_signal)
 
-    icon = str(ICON) if ICON.exists() else None
+    if sys.platform == "darwin" and not getattr(sys, "frozen", False):
+        window.events.shown += _schedule_dock_icon
+        window.events.loaded += _schedule_dock_icon
+
     webview.start(
-        icon=icon,
         private_mode=True,
         http_server=True,
         storage_path=str(support_dir() / "webview"),

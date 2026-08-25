@@ -93,6 +93,13 @@ pip install -r requirements.txt
 python app.py
 ```
 
+Mac 开发时若 Dock 没有「流影」图标（终端里 `python app.py` 常见），可生成开发用应用包后双击启动：
+
+```bash
+python scripts/make_dev_app.py
+open Liuying-Dev.app
+```
+
 ## 本地打包
 
 必须在对应系统上打包，不能在 Mac 上打出 Windows exe。
