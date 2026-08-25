@@ -50,17 +50,14 @@ def main() -> None:
         folder = dist / "Liuying"
         print(f"\nWindows folder: {folder}")
         print("Ship the whole Liuying folder. Users run Liuying.exe.")
-        print("Requires Microsoft Edge WebView2 (included on most Win10/11 PCs).")
+        print("Requires Microsoft Edge (included on most Win10/11 PCs).")
         (folder / "请解压后在本目录运行.txt").write_text(
             "不要只拷贝 Liuying.exe。\n"
             "必须保留同目录下的 _internal 文件夹，然后双击 Liuying.exe。\n"
             "\n"
-            "如果弹出 Python.Runtime.dll 相关错误：\n"
-            "回到下载的 zip，右键 → 属性 → 勾选「解除锁定」→ 确定，\n"
-            "然后删除已解压的文件夹，重新解压后再运行。\n"
-            "\n"
-            "如果双击没反应，安装 WebView2 后重试：\n"
-            "https://go.microsoft.com/fwlink/p/?LinkId=2124703\n",
+            "本程序会打开 Microsoft Edge 窗口（Win10/11 一般已自带）。\n"
+            "如果双击没有窗口，请安装 Edge 后重试：\n"
+            "https://www.microsoft.com/edge\n",
             encoding="utf-8",
         )
 

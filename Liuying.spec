@@ -4,7 +4,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs
+from PyInstaller.utils.hooks import collect_data_files
 
 ROOT = Path(SPECPATH)
 
@@ -29,29 +29,22 @@ datas = [
     (str(ROOT / "web"), "web"),
     (str(ROOT / "assets"), "assets"),
 ]
-datas += collect_data_files("webview", subdir="js")
-if sys.platform == "win32":
-    datas += collect_data_files("webview", subdir="lib")
-    binaries += collect_dynamic_libs("webview")
-
+excludes = ["tkinter", "matplotlib", "numpy", "PIL"]
 hiddenimports = [
-    "bottle",
     "Crypto.Cipher.AES",
     "Crypto.Util.Padding",
-    "webview",
-    "webview.http",
 ]
 if sys.platform == "darwin":
-    hiddenimports += ["webview.platforms.cocoa"]
-elif sys.platform == "win32":
+    datas += collect_data_files("webview", subdir="js")
     hiddenimports += [
-        "clr",
-        "clr_loader",
-        "pythonnet",
-        "webview.platforms.edgechromium",
-        "webview.platforms.winforms",
-        "webview.platforms.win32",
+        "bottle",
+        "webview",
+        "webview.http",
+        "webview.platforms.cocoa",
     ]
+elif sys.platform == "win32":
+    hiddenimports += ["windows_host"]
+    excludes += ["webview", "pythonnet", "clr", "clr_loader"]
 
 a = Analysis(
     [str(ROOT / "app.py")],
@@ -62,7 +55,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=["tkinter", "matplotlib", "numpy", "PIL"],
+    excludes=excludes,
     noarchive=False,
 )
 

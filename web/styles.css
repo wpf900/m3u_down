@@ -53,6 +53,14 @@ textarea {
   flex-shrink: 0;
 }
 
+body.edge-host .titlebar {
+  grid-template-columns: 1fr;
+}
+
+body.edge-host .traffic {
+  display: none;
+}
+
 .traffic {
   display: flex;
   gap: 8px;

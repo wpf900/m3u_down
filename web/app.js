@@ -218,12 +218,40 @@ function render(tasks) {
   });
 }
 
+function backendReady() {
+  return Boolean(window.pywebview?.api?.get_bootstrap);
+}
+
+async function callApi(name, args = []) {
+  if (window.pywebview?.api?.[name]) {
+    return window.pywebview.api[name](...args);
+  }
+  const res = await fetch(`/rpc/${name}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(args),
+  });
+  const payload = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(payload.error || res.statusText || "请求失败");
+  return payload.result;
+}
+
+const api = new Proxy(
+  {},
+  {
+    get(_target, name) {
+      if (name === "then") return undefined;
+      return (...args) => callApi(name, args);
+    },
+  }
+);
+
 async function start() {
   const hint = $("hint");
   hint.textContent = "";
   $("btnStart").disabled = true;
   try {
-    const result = await pywebview.api.start_downloads($("urls").value, prefs());
+    const result = await api.start_downloads($("urls").value, prefs());
     if (!result.ok) {
       hint.textContent = result.error || "无法开始";
       return;
@@ -265,8 +293,8 @@ async function confirmPending() {
   if (!action) return;
   closeConfirm();
   try {
-    if (action.act === "remove") await pywebview.api.remove_task(action.id);
-    else await pywebview.api.cancel_task(action.id);
+    if (action.act === "remove") await api.remove_task(action.id);
+    else await api.cancel_task(action.id);
   } catch (_) {
     /* ignore */
   }
@@ -274,10 +302,10 @@ async function confirmPending() {
 }
 
 async function refresh() {
-  if (ticking || !window.pywebview?.api?.snapshot) return;
+  if (ticking) return;
   ticking = true;
   try {
-    const data = await pywebview.api.snapshot();
+    const data = await api.snapshot();
     render(data.tasks || data || []);
   } catch (_) {
     /* window may be closing */
@@ -287,15 +315,15 @@ async function refresh() {
 }
 
 function bind() {
-  $("btnClose").onclick = () => pywebview.api.win_close();
-  $("btnMin").onclick = () => pywebview.api.win_min();
-  $("btnZoom").onclick = () => pywebview.api.win_zoom();
+  $("btnClose").onclick = () => api.win_close();
+  $("btnMin").onclick = () => api.win_min();
+  $("btnZoom").onclick = () => api.win_zoom();
   $("btnStart").onclick = start;
   $("btnHeaders").onclick = () => {
     $("headersPanel").hidden = !$("headersPanel").hidden;
   };
   $("btnFolder").onclick = async () => {
-    const path = await pywebview.api.choose_folder();
+    const path = await api.choose_folder();
     if (path) {
       folderPath = path;
       $("folderLabel").textContent = path;
@@ -311,12 +339,12 @@ function bind() {
     const button = event.target.closest("button[data-act]");
     if (!button) return;
     const { act, id, path, name } = button.dataset;
-    if (act === "pause") pywebview.api.pause_task(id).then(refresh);
-    if (act === "resume") pywebview.api.resume_task(id).then(refresh);
-    if (act === "retry") pywebview.api.retry_task(id).then(refresh);
+    if (act === "pause") api.pause_task(id).then(refresh);
+    if (act === "resume") api.resume_task(id).then(refresh);
+    if (act === "retry") api.retry_task(id).then(refresh);
     if (act === "cancel") openConfirm("cancel", id, name);
     if (act === "remove") openConfirm("remove", id, name);
-    if (act === "reveal") pywebview.api.reveal(path);
+    if (act === "reveal") api.reveal(path);
   };
   $("confirmNo").onclick = closeConfirm;
   $("confirmYes").onclick = confirmPending;
@@ -331,7 +359,7 @@ function bind() {
     }
   });
   ["taskWorkers", "segWorkers", "ua", "referer"].forEach((id) => {
-    $(id).addEventListener("change", () => pywebview.api.save_prefs(prefs()));
+    $(id).addEventListener("change", () => api.save_prefs(prefs()));
   });
 }
 
@@ -339,9 +367,26 @@ async function boot() {
   if (booted) return;
   booted = true;
   bind();
-  applyBootstrap(await pywebview.api.get_bootstrap());
+  const data = await api.get_bootstrap();
+  if (data.host === "edge") document.body.classList.add("edge-host");
+  applyBootstrap(data);
   setInterval(refresh, 250);
 }
 
-window.addEventListener("pywebviewready", boot);
-if (window.pywebview?.api) boot();
+window.addEventListener("pywebviewready", () => {
+  boot().catch(() => {});
+});
+if (backendReady()) {
+  boot().catch(() => {});
+} else {
+  fetch("/rpc/get_bootstrap", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "[]",
+  })
+    .then((res) => {
+      if (res.ok) return boot();
+      return null;
+    })
+    .catch(() => {});
+}

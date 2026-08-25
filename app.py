@@ -10,10 +10,28 @@ import time
 import traceback
 from pathlib import Path
 
-if sys.platform == "win32":
-    os.environ.setdefault("PYTHONNET_RUNTIME", "netfx")
 
-import webview
+def _alert(title: str, message: str) -> None:
+    if sys.platform == "win32":
+        import ctypes
+
+        ctypes.windll.user32.MessageBoxW(0, message, title, 0x10)
+        return
+    print(f"{title}: {message}", file=sys.stderr)
+
+
+def _install_excepthook() -> None:
+    def hook(exc_type, exc, tb) -> None:
+        details = "".join(traceback.format_exception(exc_type, exc, tb))
+        try:
+            _alert("流影启动失败", f"{exc}\n\n{details[-1500:]}")
+        except Exception:
+            pass
+
+    sys.excepthook = hook
+
+
+_install_excepthook()
 
 from downloader import DEFAULT_UA, DownloadManager, extract_items, find_ffmpeg
 
@@ -38,16 +56,6 @@ ICON = ROOT / "assets" / "icon.png"
 SUPPORT = support_dir()
 SETTINGS_PATH = SUPPORT / "settings.json"
 DEFAULT_OUTPUT = str(Path.home() / "Downloads" / "流影")
-WEBVIEW2_URL = "https://go.microsoft.com/fwlink/p/?LinkId=2124703"
-
-
-def _alert(title: str, message: str) -> None:
-    if sys.platform == "win32":
-        import ctypes
-
-        ctypes.windll.user32.MessageBoxW(0, message, title, 0x10)
-        return
-    print(f"{title}: {message}", file=sys.stderr)
 
 
 def _write_error_log(text: str) -> Path:
@@ -55,32 +63,6 @@ def _write_error_log(text: str) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
     return path
-
-
-def _has_webview2() -> bool:
-    if sys.platform != "win32":
-        return True
-    import winreg
-
-    keys = (
-        r"SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}",
-        r"SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}",
-    )
-    hives = (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER)
-    for hive in hives:
-        for key in keys:
-            try:
-                with winreg.OpenKey(hive, key) as handle:
-                    version, _ = winreg.QueryValueEx(handle, "pv")
-                if version and version != "0.0.0.0":
-                    return True
-            except OSError:
-                continue
-    roots = (
-        Path(os.environ.get("PROGRAMFILES", r"C:\Program Files")) / "Microsoft" / "EdgeWebView",
-        Path(os.environ.get("PROGRAMFILES(X86)", r"C:\Program Files (x86)")) / "Microsoft" / "EdgeWebView",
-    )
-    return any((root / "Application").is_dir() for root in roots)
 
 
 def load_settings() -> dict:
@@ -106,7 +88,8 @@ def save_settings(data: dict) -> None:
 
 class Api:
     def __init__(self) -> None:
-        self.window: webview.Window | None = None
+        self.window = None
+        self._windows_host = None
         self.settings = load_settings()
         self.manager = DownloadManager(find_ffmpeg())
         self.manager.max_tasks = int(self.settings["task_workers"])
@@ -119,6 +102,7 @@ class Api:
             "settings": self.settings,
             "tasks": self.manager.snapshot(),
             "ffmpeg": self.manager.ffmpeg or "",
+            "host": "edge" if sys.platform == "win32" else "webview",
         }
 
     def save_prefs(self, prefs: dict) -> dict:
@@ -138,8 +122,19 @@ class Api:
         return self.settings
 
     def choose_folder(self) -> str | None:
+        if sys.platform == "win32":
+            from windows_host import pick_folder
+
+            path = pick_folder(self.settings.get("output_dir") or DEFAULT_OUTPUT)
+            if not path:
+                return None
+            self.settings["output_dir"] = path
+            save_settings(self.settings)
+            return path
         if not self.window:
             return None
+        import webview
+
         result = self.window.create_file_dialog(
             webview.FileDialog.FOLDER,
             directory=self.settings.get("output_dir") or DEFAULT_OUTPUT,
@@ -229,6 +224,13 @@ class Api:
             pass
         window = self.window
         self.window = None
+        host = self._windows_host
+        self._windows_host = None
+        if host:
+            try:
+                host.stop()
+            except Exception:
+                pass
         if window:
             try:
                 window.destroy()
@@ -242,50 +244,8 @@ def _force_exit() -> None:
     os._exit(0)
 
 
-def _strip_zone_identifier(path: Path) -> None:
-    ads = f"{path}:Zone.Identifier"
-    try:
-        os.remove(ads)
-    except OSError:
-        pass
-    try:
-        import ctypes
-
-        ctypes.windll.kernel32.DeleteFileW(ads)
-    except Exception:
-        pass
-
-
-def _unblock_frozen_binaries() -> None:
-    """Clear Mark-of-the-Web so .NET can load pythonnet DLLs from a downloaded zip."""
-    if sys.platform != "win32" or not getattr(sys, "frozen", False):
-        return
-    roots: list[Path] = []
-    meipass = getattr(sys, "_MEIPASS", None)
-    if meipass:
-        roots.append(Path(meipass))
-    roots.append(Path(sys.executable).resolve().parent)
-    seen: set[Path] = set()
-    suffixes = {".dll", ".exe", ".pyd"}
-    for root in roots:
-        try:
-            root = root.resolve()
-        except OSError:
-            continue
-        if root in seen or not root.is_dir():
-            continue
-        seen.add(root)
-        _strip_zone_identifier(root)
-        for dirpath, _, filenames in os.walk(root):
-            _strip_zone_identifier(Path(dirpath))
-            for name in filenames:
-                path = Path(dirpath) / name
-                if path.suffix.lower() in suffixes:
-                    _strip_zone_identifier(path)
-
-
 def main() -> None:
-    _unblock_frozen_binaries()
+    SUPPORT.mkdir(parents=True, exist_ok=True)
     if getattr(sys, "frozen", False):
         os.chdir(Path(sys.executable).resolve().parent)
     html = ROOT / "web" / "index.html"
@@ -294,13 +254,16 @@ def main() -> None:
             "找不到界面文件 web/index.html。\n"
             "请解压整个压缩包，在含有 Liuying.exe 和 _internal 的文件夹里运行，不要只拷贝 exe。"
         )
-    if not _has_webview2():
-        raise RuntimeError(
-            "未检测到 Microsoft Edge WebView2，窗口无法显示。\n"
-            f"请安装：{WEBVIEW2_URL}\n"
-            "装好后重新双击 Liuying.exe。"
-        )
     api = Api()
+    if sys.platform == "win32":
+        from windows_host import run_windows
+
+        run_windows(api, ROOT / "web", SUPPORT)
+        api.quit()
+        return
+
+    import webview
+
     webview.settings["ALLOW_FILE_URLS"] = True
     window = webview.create_window(
         "流影",
@@ -309,7 +272,7 @@ def main() -> None:
         width=900,
         height=720,
         min_size=(760, 580),
-        frameless=sys.platform != "win32",
+        frameless=True,
         easy_drag=False,
         shadow=True,
         background_color="#F3F5EE",
@@ -325,15 +288,12 @@ def main() -> None:
     signal.signal(signal.SIGTERM, handle_signal)
 
     icon = str(ICON) if ICON.exists() else None
-    start_kwargs = {
-        "icon": icon,
-        "private_mode": True,
-        "http_server": True,
-        "storage_path": str(support_dir() / "webview"),
-    }
-    if sys.platform == "win32":
-        start_kwargs["gui"] = "edgechromium"
-    webview.start(**start_kwargs)
+    webview.start(
+        icon=icon,
+        private_mode=True,
+        http_server=True,
+        storage_path=str(support_dir() / "webview"),
+    )
     api.quit()
 
 
@@ -342,19 +302,19 @@ if __name__ == "__main__":
         main()
     except KeyboardInterrupt:
         pass
-    except Exception as exc:
+    except BaseException as exc:
         details = "".join(traceback.format_exception(exc))
-        log_path = _write_error_log(details)
-        if "Python.Runtime" in details:
-            message = (
-                "Windows 把从网上下载的程序当成了未信任文件，窗口组件无法加载。\n\n"
-                "请先关掉本窗口，然后：\n"
-                "1. 回到下载的 zip，右键 → 属性 → 勾选「解除锁定」→ 确定\n"
-                "2. 删除已解压的文件夹，重新解压\n"
-                "3. 再双击 Liuying.exe\n\n"
-                f"详细日志：\n{log_path}"
-            )
+        try:
+            log_path = _write_error_log(details)
+            log_hint = f"\n\n详细日志：\n{log_path}"
+        except Exception:
+            log_hint = f"\n\n{details}"
+        if isinstance(exc, FileNotFoundError) and "web/index.html" in str(exc):
+            message = str(exc)
         else:
-            message = f"{exc}\n\n详细日志：\n{log_path}"
-        _alert("流影启动失败", message)
+            message = f"{exc}{log_hint}"
+        try:
+            _alert("流影启动失败", message)
+        except Exception:
+            pass
     os._exit(0)
