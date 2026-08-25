@@ -21,6 +21,8 @@ jobs:
             artifact: Liuying-windows-x64
           - os: macos-15
             artifact: Liuying-macos-arm64
+          - os: macos-13
+            artifact: Liuying-macos-intel
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -55,31 +57,6 @@ jobs:
         with:
           name: ${{ matrix.artifact }}
           path: ${{ matrix.artifact }}.zip
-          if-no-files-found: error
-
-  package-intel:
-    continue-on-error: true
-    runs-on: macos-13
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt -r requirements-build.txt
-      - name: Build
-        env:
-          PYTHONUTF8: "1"
-          PYTHONIOENCODING: utf-8
-        run: python scripts/build.py
-      - name: Stage macOS zip
-        run: ditto -c -k --keepParent dist/Liuying.app Liuying-macos-intel.zip
-      - uses: actions/upload-artifact@v4
-        with:
-          name: Liuying-macos-intel
-          path: Liuying-macos-intel.zip
           if-no-files-found: error
 
   release:

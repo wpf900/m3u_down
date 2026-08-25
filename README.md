@@ -20,7 +20,7 @@ Packages 是给 Docker / npm 这类包用的，这个桌面应用不需要。
 |---|---|
 | `Liuying-windows-x64.zip` | Windows 10 / 11（64 位） |
 | `Liuying-macos-arm64.zip` | Apple 芯片 Mac（M1 / M2 / M3 / M4） |
-| `Liuying-macos-intel.zip` | Intel Mac（可选，Actions 空闲时才会打出来） |
+| `Liuying-macos-intel.zip` | Intel Mac |
 
 ### 自己发一个新版本
 
