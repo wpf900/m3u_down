@@ -11,8 +11,33 @@ on:
     tags:
       - "v*"
 
+permissions:
+  contents: write
+
 jobs:
+  prepare-release:
+    if: github.ref_type == 'tag' || inputs.version != ''
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - id: tag
+        run: |
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            echo "tag=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: 流影 ${{ steps.tag.outputs.tag }}
+          generate_release_notes: true
+          target_commitish: ${{ github.sha }}
+
   package:
+    needs: prepare-release
+    if: always() && !cancelled() && (needs.prepare-release.result == 'success' || needs.prepare-release.result == 'skipped')
     strategy:
       fail-fast: false
       matrix:
@@ -59,32 +84,11 @@ jobs:
           path: ${{ matrix.artifact }}.zip
           if-no-files-found: error
 
-  release:
-    needs: package
-    if: >-
-      success() &&
-      (github.ref_type == 'tag' || inputs.version != '')
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/download-artifact@v4
+      - name: Attach to GitHub Release
+        if: needs.prepare-release.result == 'success'
+        uses: softprops/action-gh-release@v2
         with:
-          pattern: Liuying-*
-          path: artifacts
-          merge-multiple: false
-
-      - name: Collect zip files
-        run: |
-          mkdir -p dist
-          find artifacts -name '*.zip' -exec cp {} dist/ \;
-          ls -lh dist
-
-      - uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || inputs.version }}
-          name: 流影 ${{ github.ref_type == 'tag' && github.ref_name || inputs.version }}
-          files: dist/*.zip
-          generate_release_notes: true
+          tag_name: ${{ needs.prepare-release.outputs.tag }}
+          files: ${{ matrix.artifact }}.zip
           fail_on_unmatched_files: true
           target_commitish: ${{ github.sha }}

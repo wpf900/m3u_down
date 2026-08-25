@@ -31,14 +31,14 @@ git tag v1.0.1
 git push origin v1.0.1
 ```
 
-会自动打包，并在 Releases 里创建一个同名版本。
+会自动打包。哪个平台先打完，安装包就会先出现在同一个 Release 里，不必等三个都完成。
 
 **方式 B：在网页上点**
 
 1. 打开 [Actions → Build](https://github.com/wpf900/m3u_down/actions/workflows/build.yml)
 2. **Run workflow**
 3. `version` 填 `v1.0.1`（必须带 `v`）
-4. 跑完后到 Releases 下载
+4. 哪个平台打完，哪个 zip 就会出现在 Releases；Intel Mac 若在排队，不挡住另外两个
 
 如果 `version` 留空，只会生成 **Artifacts**（临时文件，大约 90 天过期），**不会**出现在 Releases 页面。
 
