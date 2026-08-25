@@ -6,20 +6,41 @@
 
 ## 下载安装包
 
-仓库是私有的，需要登录 GitHub 账号（且有本仓库权限）才能下载。
+安装包会出现在仓库首页的 **[Releases](https://github.com/wpf900/m3u_down/releases)**，而不是 Packages。
 
-1. 打开 [Actions → Build](https://github.com/wpf900/m3u_down/actions/workflows/build.yml)
-2. 点右上角 **Run workflow**，分支选 `main`，再点绿色 **Run workflow**
-3. 等三个任务都变成绿色（大约 5–10 分钟）
-4. 点进这次运行，拉到页面底部 **Artifacts**，下载对应压缩包：
+Packages 是给 Docker / npm 这类包用的，这个桌面应用不需要。
+
+仓库是私有的，下载需要登录 GitHub，并且有本仓库权限。
+
+### 从 Releases 下载（推荐）
+
+打开 [Releases](https://github.com/wpf900/m3u_down/releases)，选最新版本，下载：
 
 | 文件 | 适用系统 |
 |---|---|
-| `Liuying-windows-x64` | Windows 10 / 11（64 位） |
-| `Liuying-macos-arm64` | Apple 芯片 Mac（M1 / M2 / M3 / M4） |
-| `Liuying-macos-intel` | Intel Mac |
+| `Liuying-windows-x64.zip` | Windows 10 / 11（64 位） |
+| `Liuying-macos-arm64.zip` | Apple 芯片 Mac（M1 / M2 / M3 / M4） |
+| `Liuying-macos-intel.zip` | Intel Mac（可选，Actions 空闲时才会打出来） |
 
-Artifacts 默认保留 90 天。也可以打 git tag（例如 `v1.0.0`）并 push，同样会触发打包。
+### 自己发一个新版本
+
+**方式 A：打标签（以后推荐）**
+
+```bash
+git tag v1.0.1
+git push origin v1.0.1
+```
+
+会自动打包，并在 Releases 里创建一个同名版本。
+
+**方式 B：在网页上点**
+
+1. 打开 [Actions → Build](https://github.com/wpf900/m3u_down/actions/workflows/build.yml)
+2. **Run workflow**
+3. `version` 填 `v1.0.1`（必须带 `v`）
+4. 跑完后到 Releases 下载
+
+如果 `version` 留空，只会生成 **Artifacts**（临时文件，大约 90 天过期），**不会**出现在 Releases 页面。
 
 ### Windows 怎么用
 
