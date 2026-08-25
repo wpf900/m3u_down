@@ -46,8 +46,9 @@ git push origin v1.0.1
 
 1. 解压 zip，进入里面的 `Liuying` 文件夹
 2. 确认同时有 `Liuying.exe` 和 `_internal` 文件夹，再双击 exe（不要只拷贝 exe）
-3. 若双击没反应或弹出 WebView2 提示，安装 [Microsoft Edge WebView2 Runtime](https://go.microsoft.com/fwlink/p/?LinkId=2124703) 后再开
-4. 启动失败时会弹窗，日志在 `%APPDATA%\Liuying\error.log`
+3. 若提示 `Python.Runtime.dll` 无法加载：回到下载的 zip，右键 → 属性 → 勾选「解除锁定」→ 确定，然后删除已解压文件夹并重新解压
+4. 若双击没反应或弹出 WebView2 提示，安装 [Microsoft Edge WebView2 Runtime](https://go.microsoft.com/fwlink/p/?LinkId=2124703) 后再开
+5. 启动失败时会弹窗，日志在 `%APPDATA%\Liuying\error.log`
 
 ### Mac 怎么用
 

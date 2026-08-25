@@ -54,6 +54,11 @@ def main() -> None:
         (folder / "请解压后在本目录运行.txt").write_text(
             "不要只拷贝 Liuying.exe。\n"
             "必须保留同目录下的 _internal 文件夹，然后双击 Liuying.exe。\n"
+            "\n"
+            "如果弹出 Python.Runtime.dll 相关错误：\n"
+            "回到下载的 zip，右键 → 属性 → 勾选「解除锁定」→ 确定，\n"
+            "然后删除已解压的文件夹，重新解压后再运行。\n"
+            "\n"
             "如果双击没反应，安装 WebView2 后重试：\n"
             "https://go.microsoft.com/fwlink/p/?LinkId=2124703\n",
             encoding="utf-8",

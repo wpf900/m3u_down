@@ -242,7 +242,50 @@ def _force_exit() -> None:
     os._exit(0)
 
 
+def _strip_zone_identifier(path: Path) -> None:
+    ads = f"{path}:Zone.Identifier"
+    try:
+        os.remove(ads)
+    except OSError:
+        pass
+    try:
+        import ctypes
+
+        ctypes.windll.kernel32.DeleteFileW(ads)
+    except Exception:
+        pass
+
+
+def _unblock_frozen_binaries() -> None:
+    """Clear Mark-of-the-Web so .NET can load pythonnet DLLs from a downloaded zip."""
+    if sys.platform != "win32" or not getattr(sys, "frozen", False):
+        return
+    roots: list[Path] = []
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        roots.append(Path(meipass))
+    roots.append(Path(sys.executable).resolve().parent)
+    seen: set[Path] = set()
+    suffixes = {".dll", ".exe", ".pyd"}
+    for root in roots:
+        try:
+            root = root.resolve()
+        except OSError:
+            continue
+        if root in seen or not root.is_dir():
+            continue
+        seen.add(root)
+        _strip_zone_identifier(root)
+        for dirpath, _, filenames in os.walk(root):
+            _strip_zone_identifier(Path(dirpath))
+            for name in filenames:
+                path = Path(dirpath) / name
+                if path.suffix.lower() in suffixes:
+                    _strip_zone_identifier(path)
+
+
 def main() -> None:
+    _unblock_frozen_binaries()
     if getattr(sys, "frozen", False):
         os.chdir(Path(sys.executable).resolve().parent)
     html = ROOT / "web" / "index.html"
@@ -302,5 +345,16 @@ if __name__ == "__main__":
     except Exception as exc:
         details = "".join(traceback.format_exception(exc))
         log_path = _write_error_log(details)
-        _alert("流影启动失败", f"{exc}\n\n详细日志：\n{log_path}")
+        if "Python.Runtime" in details:
+            message = (
+                "Windows 把从网上下载的程序当成了未信任文件，窗口组件无法加载。\n\n"
+                "请先关掉本窗口，然后：\n"
+                "1. 回到下载的 zip，右键 → 属性 → 勾选「解除锁定」→ 确定\n"
+                "2. 删除已解压的文件夹，重新解压\n"
+                "3. 再双击 Liuying.exe\n\n"
+                f"详细日志：\n{log_path}"
+            )
+        else:
+            message = f"{exc}\n\n详细日志：\n{log_path}"
+        _alert("流影启动失败", message)
     os._exit(0)
