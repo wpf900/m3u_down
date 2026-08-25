@@ -1,61 +1,26 @@
 #!/usr/bin/env python3
-"""Generate app icons (PNG / ICO / ICNS) without extra dependencies."""
+"""Generate app icons (PNG / ICO / ICNS) from web/icon.png."""
 
 from __future__ import annotations
 
+import io
 import struct
 import subprocess
 import sys
 import tempfile
-import zlib
 from pathlib import Path
+
+from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[1]
 ASSETS = ROOT / "assets"
-WEB = ROOT / "web"
+SOURCE = ROOT / "web" / "icon.png"
 
 
-def _png(size: int) -> bytes:
-    def px(x: int, y: int) -> tuple[int, int, int, int]:
-        cx = cy = (size - 1) / 2
-        dx, dy = x - cx, y - cy
-        r = (dx * dx + dy * dy) ** 0.5
-        rad = size * 0.46
-        if r > rad:
-            return (0, 0, 0, 0)
-        t = r / rad
-        # pistachio rounded mark
-        g = int(183 + (143 - 183) * t)
-        b = int(164 + (120 - 164) * t)
-        rr = int(183 + (120 - 183) * t * 0.2)
-        # inner lemon chevron (play)
-        nx, ny = dx / (size * 0.18), dy / (size * 0.22)
-        if -0.55 < nx < 0.85 and abs(ny) < 0.9 - nx * 0.55:
-            return (248, 243, 196, 255)
-        return (rr, g, b, 255)
-
-    raw = bytearray()
-    for y in range(size):
-        raw.append(0)
-        for x in range(size):
-            raw.extend(px(x, y))
-
-    def chunk(tag: bytes, data: bytes) -> bytes:
-        return (
-            struct.pack(">I", len(data))
-            + tag
-            + data
-            + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
-        )
-
-    return b"".join(
-        [
-            b"\x89PNG\r\n\x1a\n",
-            chunk(b"IHDR", struct.pack(">IIBBBBB", size, size, 8, 6, 0, 0, 0)),
-            chunk(b"IDAT", zlib.compress(bytes(raw), 9)),
-            chunk(b"IEND", b""),
-        ]
-    )
+def _png_bytes(img: Image.Image) -> bytes:
+    buf = io.BytesIO()
+    img.save(buf, format="PNG", optimize=True)
+    return buf.getvalue()
 
 
 def _ico(png: bytes, size: int) -> bytes:
@@ -107,19 +72,25 @@ def _write_icns(png_1024: bytes, dest: Path) -> None:
 
 
 def main() -> None:
+    if not SOURCE.exists():
+        raise SystemExit(f"missing source icon: {SOURCE}")
+
     ASSETS.mkdir(parents=True, exist_ok=True)
-    WEB.mkdir(parents=True, exist_ok=True)
-    png_256 = _png(256)
-    png_1024 = _png(1024)
-    (ASSETS / "icon.png").write_bytes(png_256)
-    (WEB / "icon.png").write_bytes(_png(64))
+    src = Image.open(SOURCE).convert("RGBA")
+    icon_256 = src.resize((256, 256), Image.Resampling.LANCZOS)
+    icon_1024 = src.resize((1024, 1024), Image.Resampling.LANCZOS)
+
+    src.save(ASSETS / "icon.png")
+    png_256 = _png_bytes(icon_256)
     (ASSETS / "icon.ico").write_bytes(_ico(png_256, 256))
+
     icns = ASSETS / "icon.icns"
     try:
-        _write_icns(png_1024, icns)
+        _write_icns(_png_bytes(icon_1024), icns)
     except Exception:
         icns.unlink(missing_ok=True)
-    print(f"wrote {ASSETS / 'icon.png'}")
+
+    print(f"wrote assets from {SOURCE}")
 
 
 if __name__ == "__main__":
