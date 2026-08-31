@@ -1,5 +1,7 @@
 # 流影
 
+by wpf900 · [![GitHub](https://img.shields.io/badge/GitHub-m3u__down-181717?logo=github)](https://github.com/wpf900/m3u_down)
+
 跨平台 HLS（m3u8）下载桌面应用。粘贴链接后多线程拉取分片，再用内置 ffmpeg 合成 MP4。
 
 支持 **Windows x64**、**macOS Apple 芯片**、**macOS Intel**。
@@ -56,7 +58,7 @@ git push origin v1.0.1
 3. 未做 Apple 开发者签名。若提示「已损坏」或无法打开：
 
 ```bash
-xattr -cr /path/to/Liuying.app
+xattr -cr /Applications/Liuying.app
 ```
 
 然后对图标 **右键 → 打开**。
