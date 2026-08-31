@@ -46,7 +46,7 @@ jobs:
             artifact: Liuying-windows-x64
           - os: macos-15
             artifact: Liuying-macos-arm64
-          - os: macos-13
+          - os: macos-15-intel
             artifact: Liuying-macos-intel
     runs-on: ${{ matrix.os }}
     steps:
