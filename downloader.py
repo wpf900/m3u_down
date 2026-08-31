@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import re
+from datetime import datetime
 import shutil
 import struct
 import subprocess
@@ -17,6 +19,8 @@ import requests
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import unpad
 
+from task_store import TaskStore
+
 DEFAULT_UA = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
     "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.15"
@@ -31,6 +35,10 @@ class HLSError(Exception):
 
 
 class Cancelled(Exception):
+    pass
+
+
+class Shutdown(Exception):
     pass
 
 
@@ -246,6 +254,27 @@ def series_folder_name(raw: str) -> str:
     return "" if name == "未命名视频" else name
 
 
+def series_from_dest(dest_dir: str, output_dir: str) -> str:
+    dest = Path(dest_dir)
+    root = Path(output_dir)
+    try:
+        rel = dest.resolve().relative_to(root.resolve())
+    except ValueError:
+        return ""
+    if rel.parts:
+        return dest.name
+    return ""
+
+
+def infer_series(output_dir: str, name: str, stored: str = "") -> str:
+    if stored:
+        return stored
+    folder = Path(output_dir).name
+    if folder and name and folder != name:
+        return folder
+    return ""
+
+
 def plan_jobs(
     items: list[tuple[str, str]], series: str, output_dir: str
 ) -> list[tuple[str, str, str]]:
@@ -282,6 +311,9 @@ class Task:
     error: str = ""
     output: str = ""
     tmp_dir: str = ""
+    series: str = ""
+    finished_at: str = ""
+    archived: bool = False
     seg_state: bytearray = field(default_factory=bytearray)
     pause_event: threading.Event = field(default_factory=threading.Event)
     cancel_event: threading.Event = field(default_factory=threading.Event)
@@ -303,6 +335,9 @@ class Task:
             output = self.output
             url = self.url
             task_id = self.id
+            series = self.series
+            finished_at = self.finished_at
+            archived = self.archived
         progress = 0.0
         if status == "merging":
             progress = 97.0
@@ -319,6 +354,7 @@ class Task:
             "id": task_id,
             "url": url,
             "name": name,
+            "series": series,
             "status": status,
             "done": done,
             "total": total,
@@ -328,18 +364,144 @@ class Task:
             "error": error,
             "output": output,
             "mosaic": mosaic,
+            "finished_at": finished_at,
+            "archived": archived,
         }
 
 
 class DownloadManager:
-    def __init__(self, ffmpeg: str | None):
+    def __init__(self, ffmpeg: str | None, db_path: Path | None = None):
         self.ffmpeg = ffmpeg
         self.max_tasks = 3
         self.tasks: dict[str, Task] = {}
         self.order: list[str] = []
         self.lock = threading.Lock()
         self._stop = threading.Event()
+        self._shutting_down = False
+        self.store = None
+        if db_path is not None:
+            self.store = TaskStore(db_path)
+        self._restore_tasks()
         threading.Thread(target=self._dispatch_loop, daemon=True, name="liuying-dispatch").start()
+        if self.store:
+            threading.Thread(
+                target=self._autosave_loop, daemon=True, name="liuying-persist"
+            ).start()
+
+    def _task_record(self, task: Task) -> dict:
+        with task.lock:
+            return {
+                "id": task.id,
+                "url": task.url,
+                "name": task.name,
+                "output_dir": task.output_dir,
+                "segment_workers": task.segment_workers,
+                "headers": dict(task.headers),
+                "status": task.status,
+                "done": task.done,
+                "total": task.total,
+                "downloaded": task.downloaded,
+                "error": task.error,
+                "output": task.output,
+                "tmp_dir": task.tmp_dir,
+                "seg_state": bytes(task.seg_state) if task.seg_state else None,
+                "finished_at": task.finished_at,
+                "archived": task.archived,
+                "series": task.series,
+            }
+
+    def _persist(self, task: Task) -> None:
+        if not self.store:
+            return
+        with self.lock:
+            sort_order = self.order.index(task.id) if task.id in self.order else len(self.order)
+        try:
+            self.store.upsert(self._task_record(task), sort_order)
+        except Exception:
+            pass
+
+    def _persist_all(self) -> None:
+        if not self.store:
+            return
+        with self.lock:
+            items = [(index, self.tasks[tid]) for index, tid in enumerate(self.order) if tid in self.tasks]
+        for index, task in items:
+            try:
+                self.store.upsert(self._task_record(task), index)
+            except Exception:
+                pass
+
+    def _archive_task(self, task: Task, when: str | None = None) -> None:
+        task.archived = True
+        if not task.finished_at:
+            task.finished_at = when or datetime.now().isoformat(timespec="seconds")
+
+    def _restore_tasks(self) -> None:
+        if not self.store:
+            return
+        for row in self.store.load_all():
+            try:
+                headers = json.loads(row["headers_json"] or "{}")
+            except json.JSONDecodeError:
+                headers = {"User-Agent": DEFAULT_UA}
+            seg_state = bytearray(row["seg_state"]) if row["seg_state"] else bytearray()
+            finished_at = row["finished_at"] or ""
+            archived = bool(row["archived"])
+            stored_series = row["series"] if "series" in row.keys() else ""
+            series = infer_series(row["output_dir"], row["name"], stored_series)
+            task = Task(
+                id=row["id"],
+                url=row["url"],
+                name=row["name"],
+                output_dir=row["output_dir"],
+                segment_workers=int(row["segment_workers"]),
+                headers=headers,
+                status=row["status"],
+                done=int(row["done"] or 0),
+                total=int(row["total"] or 0),
+                downloaded=int(row["downloaded"] or 0),
+                error=row["error"] or "",
+                output=row["output"] or "",
+                tmp_dir=row["tmp_dir"] or "",
+                series=series,
+                finished_at=finished_at,
+                archived=archived,
+                seg_state=seg_state,
+            )
+            if task.status in {"downloading", "parsing", "merging"}:
+                task.status = "queued"
+                task.archived = False
+            if task.tmp_dir and Path(task.tmp_dir).is_dir() and task.total > 0:
+                if len(task.seg_state) != task.total:
+                    task.seg_state = bytearray(task.total)
+                self._sync_progress_from_disk(task, Path(task.tmp_dir))
+            if task.status == "done":
+                output_path = Path(task.output) if task.output else None
+                if output_path and output_path.is_file():
+                    self._archive_task(task, finished_at or None)
+                elif (
+                    task.tmp_dir
+                    and Path(task.tmp_dir).is_dir()
+                    and task.total > 0
+                    and task.done >= task.total
+                ):
+                    task.status = "queued"
+                    task.error = ""
+                    task.archived = False
+                else:
+                    task.status = "error"
+                    task.error = "输出文件不存在，请重试下载"
+                    self._archive_task(task, finished_at or None)
+            elif task.status in {"error", "cancelled"}:
+                self._archive_task(task, finished_at or None)
+            self.tasks[task.id] = task
+            self.order.append(task.id)
+
+    def _autosave_loop(self) -> None:
+        while not self._stop.wait(3.0):
+            if self._shutting_down:
+                return
+            self._persist_all()
 
     def enqueue(self, items: list[tuple[str, str]], options: dict) -> list[dict]:
         output_dir = str(options.get("output_dir") or str(Path.home() / "Downloads" / "流影"))
@@ -351,6 +513,7 @@ class DownloadManager:
             headers["Referer"] = referer
         jobs = plan_jobs(items, str(options.get("filename") or ""), output_dir)
         created: list[dict] = []
+        new_tasks: list[Task] = []
         with self.lock:
             for url, name, dest_dir in jobs:
                 Path(dest_dir).mkdir(parents=True, exist_ok=True)
@@ -361,10 +524,14 @@ class DownloadManager:
                     output_dir=dest_dir,
                     segment_workers=workers,
                     headers=headers,
+                    series=series_from_dest(dest_dir, output_dir),
                 )
                 self.tasks[task.id] = task
                 self.order.append(task.id)
                 created.append(task.snapshot())
+                new_tasks.append(task)
+        for task in new_tasks:
+            self._persist(task)
         return created
 
     def pause(self, task_id: str) -> dict:
@@ -373,14 +540,18 @@ class DownloadManager:
             task.pause_event.set()
             task.status = "paused"
             task.speed = 0
-        return task.snapshot()
+        snapshot = task.snapshot()
+        self._persist(task)
+        return snapshot
 
     def resume(self, task_id: str) -> dict:
         task = self._get(task_id)
         if task.status == "paused":
             task.pause_event.clear()
             task.status = "downloading" if task.total else "parsing"
-        return task.snapshot()
+        snapshot = task.snapshot()
+        self._persist(task)
+        return snapshot
 
     def cancel(self, task_id: str) -> dict:
         task = self._get(task_id)
@@ -389,37 +560,35 @@ class DownloadManager:
         task.cancel_event.set()
         task.pause_event.clear()
         self._kill_proc(task)
-        self._purge_files(task)
         task.speed = 0
         task.status = "cancelled"
-        return task.snapshot()
+        snapshot = task.snapshot()
+        self._persist(task)
+        return snapshot
 
     def retry(self, task_id: str) -> dict:
         task = self._get(task_id)
         if task.status not in {"error", "cancelled"}:
             return task.snapshot()
         self._kill_proc(task)
-        self._purge_files(task)
         with task.lock:
             task.status = "queued"
-            task.done = 0
-            task.total = 0
-            task.downloaded = 0
             task.speed = 0.0
             task.error = ""
-            task.output = ""
-            task.tmp_dir = ""
-            task.seg_state = bytearray()
             task.proc = None
             task._tick_t = 0.0
             task._tick_b = 0
+            task.archived = False
+            task.finished_at = ""
         task.cancel_event.clear()
         task.pause_event.clear()
-        return task.snapshot()
+        snapshot = task.snapshot()
+        self._persist(task)
+        return snapshot
 
     def remove(self, task_id: str) -> dict:
         task = self._get(task_id)
-        if task.status not in {"error", "cancelled"}:
+        if not task.archived and task.status not in {"error", "cancelled"}:
             raise HLSError("只能删除失败或已取消的任务")
         self._kill_proc(task)
         self._purge_files(task)
@@ -427,7 +596,84 @@ class DownloadManager:
             self.tasks.pop(task_id, None)
             if task_id in self.order:
                 self.order.remove(task_id)
+        if self.store:
+            try:
+                self.store.delete(task_id)
+            except Exception:
+                pass
+        self._cleanup_output_dir(task.output_dir)
         return {"ok": True, "id": task_id}
+
+    def batch_retry(self, task_ids: list[str]) -> dict:
+        done: list[str] = []
+        skipped: list[str] = []
+        for task_id in task_ids:
+            try:
+                task = self._get(task_id)
+                if task.status not in {"error", "cancelled"}:
+                    skipped.append(task_id)
+                    continue
+                self.retry(task_id)
+                done.append(task_id)
+            except Exception:
+                skipped.append(task_id)
+        return {"ok": True, "done": done, "skipped": skipped}
+
+    def batch_remove(self, task_ids: list[str]) -> dict:
+        done: list[str] = []
+        skipped: list[str] = []
+        for task_id in task_ids:
+            try:
+                self.remove(task_id)
+                done.append(task_id)
+            except Exception:
+                skipped.append(task_id)
+        return {"ok": True, "done": done, "skipped": skipped}
+
+    def batch_cancel(self, task_ids: list[str]) -> dict:
+        done: list[str] = []
+        skipped: list[str] = []
+        for task_id in task_ids:
+            try:
+                task = self._get(task_id)
+                if task.status in {"done", "cancelled", "error"}:
+                    skipped.append(task_id)
+                    continue
+                self.cancel(task_id)
+                done.append(task_id)
+            except Exception:
+                skipped.append(task_id)
+        return {"ok": True, "done": done, "skipped": skipped}
+
+    def batch_pause(self, task_ids: list[str]) -> dict:
+        done: list[str] = []
+        skipped: list[str] = []
+        for task_id in task_ids:
+            try:
+                task = self._get(task_id)
+                if task.status not in {"downloading", "parsing"}:
+                    skipped.append(task_id)
+                    continue
+                self.pause(task_id)
+                done.append(task_id)
+            except Exception:
+                skipped.append(task_id)
+        return {"ok": True, "done": done, "skipped": skipped}
+
+    def batch_resume(self, task_ids: list[str]) -> dict:
+        done: list[str] = []
+        skipped: list[str] = []
+        for task_id in task_ids:
+            try:
+                task = self._get(task_id)
+                if task.status != "paused":
+                    skipped.append(task_id)
+                    continue
+                self.resume(task_id)
+                done.append(task_id)
+            except Exception:
+                skipped.append(task_id)
+        return {"ok": True, "done": done, "skipped": skipped}
 
     def _kill_proc(self, task: Task) -> None:
         proc = task.proc
@@ -452,21 +698,72 @@ class DownloadManager:
                 except OSError:
                     pass
 
+    def _cleanup_output_dir(self, output_dir: str) -> None:
+        if not output_dir:
+            return
+        folder = Path(output_dir)
+        if not folder.is_dir():
+            return
+        with self.lock:
+            still_used = any(task.output_dir == output_dir for task in self.tasks.values())
+        if still_used:
+            return
+        for item in folder.glob(".liuying_*"):
+            if item.is_dir():
+                shutil.rmtree(item, ignore_errors=True)
+        try:
+            if folder.is_dir() and not any(folder.iterdir()):
+                folder.rmdir()
+        except OSError:
+            pass
+
+    def _sync_progress_from_disk(self, task: Task, tmp: Path) -> None:
+        with task.lock:
+            total = len(task.seg_state)
+            done = 0
+            for index in range(total):
+                path = tmp / f"{index:05d}.ts"
+                if path.exists() and path.stat().st_size > 0:
+                    task.seg_state[index] = 2
+                    done += 1
+                elif task.seg_state[index] != 1:
+                    task.seg_state[index] = 0
+            task.done = done
+
     def shutdown(self) -> None:
+        self._shutting_down = True
         self._stop.set()
         with self.lock:
             tasks = list(self.tasks.values())
         for task in tasks:
-            task.cancel_event.set()
-            task.pause_event.clear()
             self._kill_proc(task)
-            if task.status not in {"done", "cancelled", "error"}:
-                task.status = "cancelled"
+            if task.status in {"downloading", "parsing", "merging"}:
+                task.status = "queued"
                 task.speed = 0
+        self._persist_all()
 
-    def snapshot(self) -> list[dict]:
+    def snapshot(self) -> dict:
         with self.lock:
-            return [self.tasks[tid].snapshot() for tid in self.order if tid in self.tasks]
+            active: list[dict] = []
+            history_items: list[dict] = []
+            for tid in self.order:
+                task = self.tasks.get(tid)
+                if not task:
+                    continue
+                snap = task.snapshot()
+                if task.archived:
+                    history_items.append(snap)
+                else:
+                    active.append(snap)
+        groups: dict[str, list[dict]] = {}
+        for item in history_items:
+            date = (item.get("finished_at") or "")[:10] or "未知日期"
+            groups.setdefault(date, []).append(item)
+        history = [
+            {"date": date, "tasks": groups[date]}
+            for date in sorted(groups.keys(), reverse=True)
+        ]
+        return {"active": active, "history": history}
 
     def _get(self, task_id: str) -> Task:
         task = self.tasks.get(task_id)
@@ -489,7 +786,7 @@ class DownloadManager:
                 if held < self.max_tasks:
                     for tid in self.order:
                         item = self.tasks[tid]
-                        if item.status == "queued":
+                        if item.status == "queued" and not item.archived:
                             item.status = "parsing"
                             task = item
                             break
@@ -503,8 +800,11 @@ class DownloadManager:
             self._checkpoint(task)
             session = self._session(task)
             task.name = safe_filename(task.name)
-            dest = unique_path(Path(task.output_dir), task.name)
-            task.output = str(dest)
+            if task.output:
+                dest = Path(task.output)
+            else:
+                dest = unique_path(Path(task.output_dir), task.name)
+                task.output = str(dest)
             try:
                 segments, playlist_url = self._load_playlist(session, task.url, task)
             except HLSError as exc:
@@ -519,12 +819,17 @@ class DownloadManager:
                 raise
             if not segments:
                 raise HLSError("播放列表里没有可用分片")
+            if task.tmp_dir and Path(task.tmp_dir).is_dir():
+                tmp = Path(task.tmp_dir)
+            else:
+                tmp = dest.parent / f".liuying_{task.id}"
+                tmp.mkdir(parents=True, exist_ok=True)
+                task.tmp_dir = str(tmp)
             with task.lock:
                 task.total = len(segments)
-                task.seg_state = bytearray(len(segments))
-            tmp = dest.parent / f".liuying_{task.id}"
-            tmp.mkdir(parents=True, exist_ok=True)
-            task.tmp_dir = str(tmp)
+                if len(task.seg_state) != len(segments):
+                    task.seg_state = bytearray(len(segments))
+            self._sync_progress_from_disk(task, tmp)
             task.status = "downloading"
             self._download_segments(session, task, segments, tmp)
             self._checkpoint(task)
@@ -538,21 +843,28 @@ class DownloadManager:
             task.tmp_dir = ""
             task.speed = 0
             task.status = "done"
+            self._archive_task(task)
+            self._persist(task)
+        except Shutdown:
+            self._kill_proc(task)
+            if task.status in {"downloading", "parsing", "merging"}:
+                task.status = "queued"
+            task.speed = 0
+            self._persist(task)
         except Cancelled:
             task.status = "cancelled"
             self._kill_proc(task)
-            self._purge_files(task)
+            self._archive_task(task)
+            self._persist(task)
         except Exception as exc:
             self._kill_proc(task)
             if task.cancel_event.is_set():
                 task.status = "cancelled"
-                self._purge_files(task)
             else:
                 task.status = "error"
                 task.error = str(exc) or "下载失败"
-                if task.tmp_dir:
-                    shutil.rmtree(task.tmp_dir, ignore_errors=True)
-                    task.tmp_dir = ""
+            self._archive_task(task)
+            self._persist(task)
 
     def _session(self, task: Task) -> requests.Session:
         session = requests.Session()
@@ -567,9 +879,13 @@ class DownloadManager:
         return session
 
     def _checkpoint(self, task: Task) -> None:
+        if self._shutting_down:
+            raise Shutdown()
         if task.cancel_event.is_set():
             raise Cancelled()
         while task.pause_event.is_set():
+            if self._shutting_down:
+                raise Shutdown()
             if task.cancel_event.is_set():
                 raise Cancelled()
             time.sleep(0.15)
@@ -589,7 +905,7 @@ class DownloadManager:
                 response = session.get(url, timeout=20, headers=extra or {}, allow_redirects=True)
                 response.raise_for_status()
                 return response
-            except Cancelled:
+            except (Cancelled, Shutdown):
                 raise
             except Exception as exc:
                 last_error = exc
@@ -759,6 +1075,9 @@ class DownloadManager:
         with ThreadPoolExecutor(max_workers=workers) as pool:
             futures = [pool.submit(one, index, segment) for index, segment in enumerate(segments)]
             for future in as_completed(futures):
+                if self._shutting_down:
+                    pool.shutdown(wait=True, cancel_futures=True)
+                    raise Shutdown()
                 if task.cancel_event.is_set():
                     pool.shutdown(wait=True, cancel_futures=True)
                     raise Cancelled()
@@ -840,6 +1159,13 @@ class DownloadManager:
         task.proc = proc
         try:
             while proc.poll() is None:
+                if self._shutting_down:
+                    proc.kill()
+                    try:
+                        proc.wait(timeout=3)
+                    except Exception:
+                        pass
+                    raise Shutdown()
                 if task.cancel_event.is_set():
                     proc.kill()
                     try:

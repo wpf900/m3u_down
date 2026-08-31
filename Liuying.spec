@@ -33,6 +33,7 @@ excludes = ["tkinter", "matplotlib", "numpy", "PIL"]
 hiddenimports = [
     "Crypto.Cipher.AES",
     "Crypto.Util.Padding",
+    "task_store",
 ]
 if sys.platform == "darwin":
     datas += collect_data_files("webview", subdir="js")

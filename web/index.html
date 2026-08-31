@@ -61,7 +61,7 @@
             线程
             <input id="segWorkers" type="number" min="1" max="64" value="16" />
           </label>
-          <button class="ghost" id="btnHeaders">请求头</button>
+          <button class="ghost surface-btn" id="btnHeaders">请求头</button>
           <button class="primary" id="btnStart">开始下载</button>
         </div>
         <p class="hint" id="hint"></p>
@@ -69,15 +69,58 @@
 
       <section class="queue">
         <div class="queue-head">
-          <h2>任务</h2>
+          <div class="task-tabs" role="tablist" aria-label="任务列表">
+            <button type="button" class="task-tab active" id="tabActive" role="tab" aria-selected="true" aria-controls="panelActive">任务</button>
+            <button type="button" class="task-tab" id="tabHistory" role="tab" aria-selected="false" aria-controls="panelHistory">
+              历史
+              <span class="tab-badge" id="historyBadge" hidden>0</span>
+            </button>
+          </div>
           <span id="queueMeta"></span>
+          <span id="historyMeta" hidden></span>
+          <button type="button" class="ghost select-toggle" id="btnSelectMode">多选</button>
         </div>
-        <div id="empty" class="empty">
-          <div class="empty-orb"></div>
-          <p>还没有任务</p>
-          <span>粘贴链接后点开始，分片会并行拉取，再用 ffmpeg 合成 MP4。</span>
+
+        <div class="batch-bar" id="batchBar" hidden>
+          <label class="batch-all">
+            <input type="checkbox" id="selectAll" />
+            <span>全选</span>
+          </label>
+          <span class="batch-count" id="selectedCount">已选 0</span>
+          <div class="batch-actions">
+            <button type="button" class="text-btn" id="batchPause" hidden>暂停</button>
+            <button type="button" class="text-btn" id="batchResume" hidden>继续</button>
+            <button type="button" class="text-btn" id="batchRetry" hidden>重试</button>
+            <button type="button" class="text-btn danger-text" id="batchCancel" hidden>取消</button>
+            <button type="button" class="text-btn danger-text" id="batchRemove">删除</button>
+          </div>
         </div>
-        <div id="tasks" class="tasks"></div>
+
+        <div id="panelActive" class="task-panel" role="tabpanel" aria-labelledby="tabActive">
+          <div id="empty" class="empty">
+            <div class="empty-orb"></div>
+            <p>还没有任务</p>
+            <span>粘贴链接后点开始，分片会并行拉取，再用 ffmpeg 合成 MP4。</span>
+          </div>
+          <div id="tasks" class="tasks"></div>
+        </div>
+
+        <div id="panelHistory" class="task-panel" role="tabpanel" aria-labelledby="tabHistory" hidden>
+          <div class="history-search" id="historySearchWrap" hidden>
+            <input id="historySearch" type="search" placeholder="搜索剧名或视频名称" spellcheck="false" autocomplete="off" />
+            <button type="button" class="ghost" id="historySearchClear" hidden>清除</button>
+          </div>
+          <div id="historyEmpty" class="empty" hidden>
+            <div class="empty-orb"></div>
+            <p>暂无历史记录</p>
+            <span>已完成、失败或取消的任务会归档到这里。</span>
+          </div>
+          <div id="historySearchEmpty" class="empty" hidden>
+            <p>没有匹配的记录</p>
+            <span>试试其他剧名或视频名称。</span>
+          </div>
+          <div id="history" class="history-groups"></div>
+        </div>
       </section>
     </main>
   </div>
@@ -85,7 +128,7 @@
   <div id="confirm" class="overlay" hidden>
     <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="confirmTitle">
       <h3 id="confirmTitle">取消下载？</h3>
-      <p>
+      <p id="confirmText">
         <span id="confirmPrefix">将删除「</span><strong id="confirmName"></strong><span id="confirmSuffix">」已下载的分片和未完成文件，此操作无法恢复。</span>
       </p>
       <div class="sheet-actions">

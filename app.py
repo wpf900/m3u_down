@@ -56,6 +56,7 @@ ICON = ROOT / "assets" / "icon.png"
 ICON_ICNS = ROOT / "assets" / "icon.icns"
 SUPPORT = support_dir()
 SETTINGS_PATH = SUPPORT / "settings.json"
+TASKS_DB = SUPPORT / "tasks.db"
 DEFAULT_OUTPUT = str(Path.home() / "Downloads" / "流影")
 
 
@@ -92,16 +93,18 @@ class Api:
         self.window = None
         self._windows_host = None
         self.settings = load_settings()
-        self.manager = DownloadManager(find_ffmpeg())
+        self.manager = DownloadManager(find_ffmpeg(), TASKS_DB)
         self.manager.max_tasks = int(self.settings["task_workers"])
         self._zoomed = False
         self._saved: tuple[int, int, int, int] | None = None
         self._quitting = False
 
     def get_bootstrap(self) -> dict:
+        snap = self.manager.snapshot()
         return {
             "settings": self.settings,
-            "tasks": self.manager.snapshot(),
+            "tasks": snap.get("active", []),
+            "history": snap.get("history", []),
             "ffmpeg": self.manager.ffmpeg or "",
             "host": "edge" if sys.platform == "win32" else "webview",
         }
@@ -157,7 +160,8 @@ class Api:
         options = dict(self.settings)
         options["filename"] = filename
         tasks = self.manager.enqueue(items, options)
-        return {"ok": True, "tasks": tasks, "count": len(tasks)}
+        snap = self.manager.snapshot()
+        return {"ok": True, "tasks": snap.get("active", []), "history": snap.get("history", []), "count": len(tasks)}
 
     def pause_task(self, task_id: str) -> None:
         self.manager.pause(task_id)
@@ -174,8 +178,23 @@ class Api:
     def remove_task(self, task_id: str) -> dict:
         return self.manager.remove(task_id)
 
+    def batch_retry(self, task_ids: list) -> dict:
+        return self.manager.batch_retry(list(task_ids or []))
+
+    def batch_remove(self, task_ids: list) -> dict:
+        return self.manager.batch_remove(list(task_ids or []))
+
+    def batch_cancel(self, task_ids: list) -> dict:
+        return self.manager.batch_cancel(list(task_ids or []))
+
+    def batch_pause(self, task_ids: list) -> dict:
+        return self.manager.batch_pause(list(task_ids or []))
+
+    def batch_resume(self, task_ids: list) -> dict:
+        return self.manager.batch_resume(list(task_ids or []))
+
     def snapshot(self) -> dict:
-        return {"tasks": self.manager.snapshot()}
+        return self.manager.snapshot()
 
     def reveal(self, path: str) -> None:
         target = Path(path)
