@@ -156,7 +156,7 @@ class Api:
         self.save_prefs(prefs)
         items = extract_items(text or "")
         if not items:
-            return {"ok": False, "error": "请先粘贴至少一个 m3u8 链接"}
+            return {"ok": False, "error": "请先粘贴至少一个视频链接"}
         options = dict(self.settings)
         options["filename"] = filename
         tasks = self.manager.enqueue(items, options)

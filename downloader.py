@@ -127,6 +127,38 @@ def safe_filename(name: str) -> str:
     return (name or "未命名视频")[:80]
 
 
+DIRECT_FILE_BLOCKLIST = frozenset({".m3u8", ".html", ".htm", ".shtml"})
+FILE_EXT_RE = re.compile(r"\.[a-z0-9]{1,10}$", re.I)
+
+
+def direct_file_ext(url: str) -> str | None:
+    path = urlparse(url).path.rstrip("/")
+    if not path:
+        return None
+    name = Path(path).name
+    match = FILE_EXT_RE.search(name)
+    if not match:
+        return None
+    ext = match.group(0).lower()
+    if ext in DIRECT_FILE_BLOCKLIST:
+        return None
+    return ext
+
+
+def is_direct_file_url(url: str) -> bool:
+    return direct_file_ext(url) is not None
+
+
+def strip_file_ext(name: str) -> str:
+    match = FILE_EXT_RE.search(name)
+    if not match:
+        return name
+    ext = match.group(0).lower()
+    if ext in DIRECT_FILE_BLOCKLIST:
+        return name
+    return name[: match.start()]
+
+
 def title_from_url(url: str) -> str:
     path = urlparse(url).path.rstrip("/")
     part = Path(path).name or "video"
@@ -135,6 +167,10 @@ def title_from_url(url: str) -> str:
         if part.lower() in {"index", "playlist", "master", "video", "chunklist"}:
             parent = Path(path).parent.name
             part = parent or part
+    else:
+        ext = direct_file_ext(url)
+        if ext and part.lower().endswith(ext):
+            part = part[: -len(ext)]
     return safe_filename(part)
 
 
@@ -179,14 +215,16 @@ def aes128_decrypt(data: bytes, key: bytes, iv: bytes) -> bytes:
         return plain
 
 
-def unique_path(folder: Path, name: str) -> Path:
+def unique_path(folder: Path, name: str, ext: str = ".mp4") -> Path:
+    if not ext.startswith("."):
+        ext = f".{ext}"
     folder.mkdir(parents=True, exist_ok=True)
-    base = folder / f"{name}.mp4"
+    base = folder / f"{name}{ext}"
     if not base.exists():
         return base
     index = 2
     while True:
-        candidate = folder / f"{name}-{index}.mp4"
+        candidate = folder / f"{name}-{index}{ext}"
         if not candidate.exists():
             return candidate
         index += 1
@@ -245,9 +283,7 @@ def pack_mosaic(states: bytearray, limit: int = 400) -> str:
 
 
 def series_folder_name(raw: str) -> str:
-    raw = (raw or "").strip()
-    if raw.lower().endswith(".mp4"):
-        raw = raw[:-4]
+    raw = strip_file_ext((raw or "").strip())
     if not raw:
         return ""
     name = safe_filename(raw)
@@ -491,9 +527,9 @@ class DownloadManager:
                 else:
                     task.status = "error"
                     task.error = "输出文件不存在，请重试下载"
-                    self._archive_task(task, finished_at or None)
+                    task.archived = False
             elif task.status in {"error", "cancelled"}:
-                self._archive_task(task, finished_at or None)
+                task.archived = False
             self.tasks[task.id] = task
             self.order.append(task.id)
 
@@ -799,12 +835,25 @@ class DownloadManager:
         try:
             self._checkpoint(task)
             session = self._session(task)
-            task.name = safe_filename(task.name)
+            task.name = safe_filename(strip_file_ext(task.name))
             if task.output:
                 dest = Path(task.output)
             else:
-                dest = unique_path(Path(task.output_dir), task.name)
+                ext = direct_file_ext(task.url) or ".mp4"
+                dest = unique_path(Path(task.output_dir), task.name, ext)
                 task.output = str(dest)
+            if is_direct_file_url(task.url):
+                task.status = "downloading"
+                self._download_direct(session, task, dest)
+                if task.cancel_event.is_set():
+                    raise Cancelled()
+                if not dest.exists() or dest.stat().st_size <= 0:
+                    raise HLSError("下载失败")
+                task.speed = 0
+                task.status = "done"
+                self._archive_task(task)
+                self._persist(task)
+                return
             try:
                 segments, playlist_url = self._load_playlist(session, task.url, task)
             except HLSError as exc:
@@ -854,7 +903,7 @@ class DownloadManager:
         except Cancelled:
             task.status = "cancelled"
             self._kill_proc(task)
-            self._archive_task(task)
+            task.archived = False
             self._persist(task)
         except Exception as exc:
             self._kill_proc(task)
@@ -863,7 +912,7 @@ class DownloadManager:
             else:
                 task.status = "error"
                 task.error = str(exc) or "下载失败"
-            self._archive_task(task)
+            task.archived = False
             self._persist(task)
 
     def _session(self, task: Task) -> requests.Session:
@@ -1025,6 +1074,61 @@ class DownloadManager:
             length_s, offset = text, fallback_offset
         length = int(length_s)
         return (offset, length), offset + length
+
+    def _download_direct(self, session: requests.Session, task: Task, dest: Path) -> None:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        existing = dest.stat().st_size if dest.exists() else 0
+        headers: dict[str, str] = {}
+        if existing:
+            headers["Range"] = f"bytes={existing}-"
+        response = session.get(
+            task.url, stream=True, timeout=30, headers=headers, allow_redirects=True
+        )
+        if response.status_code == 416:
+            if existing > 0:
+                with task.lock:
+                    task.total = existing
+                    task.done = existing
+                    task.downloaded = existing
+                return
+            raise HLSError("下载失败")
+        response.raise_for_status()
+        total = 0
+        content_range = response.headers.get("Content-Range", "")
+        if content_range and "/" in content_range:
+            total = int(content_range.rsplit("/", 1)[-1])
+        elif response.headers.get("Content-Length"):
+            total = int(response.headers["Content-Length"])
+            if response.status_code == 206:
+                total += existing
+        if response.status_code == 200 and existing:
+            existing = 0
+        with task.lock:
+            task.total = total
+            task.done = existing
+            task.downloaded = existing
+        task._tick_t = time.time()
+        task._tick_b = existing
+        mode = "ab" if existing and response.status_code == 206 else "wb"
+        if mode == "wb" and dest.exists():
+            dest.unlink()
+        with dest.open(mode) as handle:
+            for chunk in response.iter_content(chunk_size=256 * 1024):
+                if not chunk:
+                    continue
+                self._checkpoint(task)
+                handle.write(chunk)
+                now = time.time()
+                with task.lock:
+                    task.done += len(chunk)
+                    task.downloaded += len(chunk)
+                    elapsed = now - task._tick_t
+                    if elapsed >= 0.4:
+                        task.speed = (task.downloaded - task._tick_b) / elapsed
+                        task._tick_t = now
+                        task._tick_b = task.downloaded
+        if total and task.done < total:
+            raise HLSError("下载不完整")
 
     def _download_segments(
         self,

@@ -20,7 +20,7 @@
         <div class="brand">
           <strong>流影</strong>
           <div class="brand-sub">
-            <span>HLS · 多线程下载</span>
+            <span>HLS / 直链 · 多线程下载</span>
             <span class="brand-dot">·</span>
             <span class="brand-meta">
               by wpf900 ·
@@ -45,13 +45,13 @@
       <section class="card composer">
         <div class="card-head">
           <h1>新的下载</h1>
-          <p>支持 <code>第01集$链接</code>。剧集请填写剧名，会自动建文件夹。</p>
+          <p>支持 m3u8、mp4、mp3 等直链。剧集请填写剧名，会自动建文件夹。</p>
         </div>
         <textarea id="urls" placeholder="第01集$https://example.com/ep01.m3u8
-第02集$https://example.com/ep02.m3u8"></textarea>
+歌曲$https://example.com/song.mp3"></textarea>
         <label class="name-field">
           剧名 / 文件夹
-          <input id="filename" type="text" maxlength="80" placeholder="例如 xxx。多集会保存到「下载目录/xxx/第01集.mp4」" />
+          <input id="filename" type="text" maxlength="80" placeholder="例如 xxx。多集会保存到「下载目录/xxx/第01集.mp4」或同名 .mp3" />
         </label>
 
         <div class="prefs" id="headersPanel" hidden>
@@ -117,7 +117,7 @@
           <div id="empty" class="empty">
             <div class="empty-orb"></div>
             <p>还没有任务</p>
-            <span>粘贴链接后点开始，分片会并行拉取，再用 ffmpeg 合成 MP4。</span>
+            <span>支持 m3u8 与 mp4/mp3 等直链；HLS 会并行拉分片后合成 MP4。</span>
           </div>
           <div id="tasks" class="tasks"></div>
         </div>
@@ -130,7 +130,7 @@
           <div id="historyEmpty" class="empty" hidden>
             <div class="empty-orb"></div>
             <p>暂无历史记录</p>
-            <span>已完成、失败或取消的任务会归档到这里。</span>
+            <span>已完成的下载会归档到这里。</span>
           </div>
           <div id="historySearchEmpty" class="empty" hidden>
             <p>没有匹配的记录</p>

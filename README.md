@@ -2,9 +2,15 @@
 
 by wpf900 · [![GitHub](https://img.shields.io/badge/GitHub-m3u__down-181717?logo=github)](https://github.com/wpf900/m3u_down)
 
-跨平台 HLS（m3u8）下载桌面应用。粘贴链接后多线程拉取分片，再用内置 ffmpeg 合成 MP4。
+跨平台 HLS（m3u8）下载桌面应用。粘贴链接后多线程拉取分片，再用内置 ffmpeg 合成 MP4。也支持 mp4、mp3 等直链文件下载。
 
 支持 **Windows x64**、**macOS Apple 芯片**、**macOS Intel**。
+
+## 效果预览
+
+| 新建下载 | 下载进度 | 历史记录 |
+|:---:|:---:|:---:|
+| ![新建下载界面](docs/preview/liuying2.png) | ![多线程下载进度](docs/preview/liuying3.png) | ![历史记录](docs/preview/liuying1.png) |
 
 ## 下载安装包
 

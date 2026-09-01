@@ -274,13 +274,23 @@ function actionKey(task) {
   return [task.status, task.output || "", task.name || "", task.error || "", task.series || ""].join("|");
 }
 
+function formatBytes(n) {
+  const v = Number(n) || 0;
+  if (v < 1024) return `${v} B`;
+  if (v < 1024 * 1024) return `${(v / 1024).toFixed(1)} KB`;
+  if (v < 1024 * 1024 * 1024) return `${(v / 1024 / 1024).toFixed(1)} MB`;
+  return `${(v / 1024 / 1024 / 1024).toFixed(2)} GB`;
+}
+
 function metaText(task, compact = false) {
   if (compact) {
     return [task.error, task.output ? "已保存" : ""].filter(Boolean).join("  ·  ");
   }
-  return [task.total ? `${task.done}/${task.total}` : "", task.speed, task.eta, task.error]
-    .filter(Boolean)
-    .join("  ·  ");
+  let progress = "";
+  if (task.total) {
+    progress = task.total > 999 ? `${formatBytes(task.done)} / ${formatBytes(task.total)}` : `${task.done}/${task.total}`;
+  }
+  return [progress, task.speed, task.eta, task.error].filter(Boolean).join("  ·  ");
 }
 
 function setBar(el, progress) {
@@ -494,7 +504,7 @@ function renderGroupedTaskList(root, tasks, compact = false) {
   return tasks || [];
 }
 
-function renderHistorySeriesList(root, tasks, dateKey, todayKey) {
+function renderHistorySeriesList(root, tasks, dateKey) {
   const groups = groupTasksBySeries(tasks);
   const seenGroups = new Set();
   const searching = Boolean(historySearchQuery.trim());
@@ -528,7 +538,7 @@ function renderHistorySeriesList(root, tasks, dateKey, todayKey) {
           <label class="series-check" hidden>
             <input type="checkbox" class="series-pick" />
           </label>
-          <button type="button" class="series-toggle" aria-expanded="true">
+          <button type="button" class="series-toggle" aria-expanded="false">
             <span class="series-name"></span>
             <span class="series-count"></span>
             <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3 4.5 6 8l3-3.5"/></svg>
@@ -544,7 +554,7 @@ function renderHistorySeriesList(root, tasks, dateKey, todayKey) {
     const collapseKey = historySeriesKey(dateKey, group.series);
     if (!wrap.dataset.inited) {
       wrap.dataset.inited = "1";
-      if (!searching && dateKey !== todayKey) collapsedHistorySeries.add(collapseKey);
+      if (!searching) collapsedHistorySeries.add(collapseKey);
     }
     if (searching) collapsedHistorySeries.delete(collapseKey);
 
@@ -603,8 +613,6 @@ function switchTab(tab) {
 }
 
 function renderHistory(groups) {
-  const today = new Date();
-  const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
   const root = $("history");
   const allGroups = lastSnapshot.history || [];
   const allTotal = allGroups.reduce((sum, group) => sum + (group.tasks?.length || 0), 0);
@@ -654,10 +662,6 @@ function renderHistory(groups) {
       root.insertBefore(wrap, root.children[index] || null);
     }
 
-    if (!wrap.dataset.inited) {
-      wrap.dataset.inited = "1";
-      if (group.date !== todayKey) collapsedHistoryDates.add(group.date);
-    }
     if (searching) collapsedHistoryDates.delete(group.date);
 
     const collapsed = collapsedHistoryDates.has(group.date);
@@ -668,7 +672,7 @@ function renderHistory(groups) {
     toggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
     const items = wrap.querySelector(".history-items");
     items.hidden = collapsed;
-    renderHistorySeriesList(items, group.tasks || [], group.date, todayKey);
+    renderHistorySeriesList(items, group.tasks || [], group.date);
   });
 
   [...root.querySelectorAll("[data-history-date]")].forEach((el) => {
